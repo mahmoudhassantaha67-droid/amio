@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>سامانه جامع مدیریت مساجد</title>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- SheetJS -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+    
+    <!-- Font -->
+    <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
+    
+    <!-- Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <style>
+        body { font-family: 'Vazirmatn', sans-serif; background-color: #f3f4f6; }
+        .animate-fade-in { animation: fadeIn 0.5s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .medal-1 { color: #FFD700; text-shadow: 0 0 10px rgba(255, 215, 0, 0.6); }
+        .medal-2 { color: #C0C0C0; text-shadow: 0 0 10px rgba(192, 192, 192, 0.6); }
+        .medal-3 { color: #CD7F32; text-shadow: 0 0 10px rgba(205, 127, 50, 0.6); }
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        /* Table input style */
+        .edit-input { background: transparent; border-bottom: 2px solid #3b82f6; outline: none; text-align: center; width: 100%; direction: ltr; }
+        .edit-input-name { background: transparent; border-bottom: 2px solid #3b82f6; outline: none; text-align: right; width: 100%; }
+        
+        /* Group Tabs Scroll */
+        .group-tabs { -ms-overflow-style: none; scrollbar-width: none; }
+        .group-tabs::-webkit-scrollbar { display: none; }
+
+        /* Viewer Mode Specifics */
+        .viewer-individual-row:nth-child(even) { background-color: #f9fafb; }
+        .viewer-individual-row:nth-child(odd) { background-color: #ffffff; }
+    </style>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        window.firebaseModules = { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, collection, writeBatch };
+    </script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // --- Teacher Manager Modal Component (Defined outside App) ---
+        function TeacherManagerModal({ onClose, isGlobal, globalLabel, dataList, groupList, onSave }) {
+            const [newTeacherName, setNewTeacherName] = useState('');
+            const [newTeacherPass, setNewTeacherPass] = useState('');
+            const [newTeacherGroup, setNewTeacherGroup] = useState('');
+            const [teacherEditId, setTeacherEditId] = useState(null);
+            const [teacherEditForm, setTeacherEditForm] = useState({});
+
+            const handleAdd = async () => {
+                if(!newTeacherName || !newTeacherPass || !newTeacherGroup) return alert("همه موارد را پر کنید");
+                const newT = { id: Date.now(), name: newTeacherName, password: newTeacherPass, group: newTeacherGroup };
+                const newList = [...dataList, newT];
+                setNewTeacherName(''); setNewTeacherPass(''); setNewTeacherGroup('');
+                await onSave(newList);
+            };
+
+            const handleRemove = (tId) => {
+                if(confirm("حذف شود؟")) {
+                    const newList = dataList.filter(t => t.id !== tId);
+                    onSave(newList);
+                }
+            };
+
+            const startEdit = (t) => {
+                setTeacherEditId(t.id);
+                setTeacherEditForm({...t});
+            };
+
+            const saveEdit = async () => {
+                const newList = dataList.map(t => t.id === teacherEditId ? teacherEditForm : t);
+                await onSave(newList);
+                setTeacherEditId(null);
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black/60 z-[250] flex items-center justify-center p-4 animate-fade-in">
+                    <div className="bg-white p-6 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-bold">مدیریت اساتید {isGlobal ? `(${globalLabel})` : ''}</h3>
+                            <button onClick={onClose}><i className="ph ph-x text-xl"></i></button>
+                        </div>
+                        
+                        <div className="bg-purple-50 p-4 rounded-xl mb-4 flex flex-col gap-2">
+                            <div className="flex gap-2">
+                                <input type="text" placeholder="نام استاد" className="flex-1 p-2 border rounded" value={newTeacherName} onChange={(e) => setNewTeacherName(e.target.value)} />
+                                <input type="text" placeholder="رمز ورود" className="flex-1 p-2 border rounded" value={newTeacherPass} onChange={(e) => setNewTeacherPass(e.target.value)} />
+                            </div>
+                            <div className="flex gap-2">
+                                <select className="flex-1 p-2 border rounded bg-white" value={newTeacherGroup} onChange={(e) => setNewTeacherGroup(e.target.value)}>
+                                    <option value="">انتخاب گروه...</option>
+                                    {groupList.map(g => <option key={g} value={g}>{g}</option>)}
+                                </select>
+                                <button onClick={handleAdd} className="flex-1 bg-purple-600 text-white py-2 rounded font-bold hover:bg-purple-700">افزودن</button>
+                            </div>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto custom-scrollbar">
+                            <table className="w-full text-right text-sm">
+                                <thead className="text-gray-500 border-b">
+                                    <tr>
+                                        <th className="p-2">نام</th>
+                                        <th className="p-2">رمز</th>
+                                        <th className="p-2">گروه</th>
+                                        <th className="p-2 text-center">عملیات</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y">
+                                    {dataList.map(t => (
+                                        <tr key={t.id} className="hover:bg-gray-50">
+                                            {teacherEditId === t.id ? (
+                                                <>
+                                                    <td className="p-2"><input className="w-full p-1 border rounded" value={teacherEditForm.name} onChange={(e)=>setTeacherEditForm({...teacherEditForm, name:e.target.value})} /></td>
+                                                    <td className="p-2"><input className="w-full p-1 border rounded" value={teacherEditForm.password} onChange={(e)=>setTeacherEditForm({...teacherEditForm, password:e.target.value})} /></td>
+                                                    <td className="p-2">
+                                                        <select className="w-full p-1 border rounded" value={teacherEditForm.group} onChange={(e)=>setTeacherEditForm({...teacherEditForm, group:e.target.value})}>{groupList.map(g => <option key={g} value={g}>{g}</option>)}</select>
+                                                    </td>
+                                                    <td className="p-2 text-center">
+                                                        <button onClick={saveEdit} className="text-green-600 p-1 mx-1"><i className="ph-bold ph-check"></i></button>
+                                                        <button onClick={()=>setTeacherEditId(null)} className="text-gray-500 p-1 mx-1"><i className="ph-bold ph-x"></i></button>
+                                                    </td>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <td className="p-2 font-bold">{t.name}</td>
+                                                    <td className="p-2 font-mono text-gray-600">{t.password}</td>
+                                                    <td className="p-2"><span className="bg-gray-100 px-2 py-1 rounded text-xs">{t.group}</span></td>
+                                                    <td className="p-2 text-center">
+                                                        <button onClick={()=>startEdit(t)} className="text-blue-500 hover:bg-blue-50 p-1 rounded mx-1"><i className="ph-bold ph-pencil-simple"></i></button>
+                                                        <button onClick={()=>handleRemove(t.id)} className="text-red-500 hover:bg-red-50 p-1 rounded mx-1"><i className="ph-bold ph-trash"></i></button>
+                                                    </td>
+                                                </>
+                                            )}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                            {dataList.length === 0 && <p className="text-center text-gray-400 py-4">لیست خالی است.</p>}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // --- App Component ---
+        function App() {
+            // ... (State definitions) ...
+            const [db, setDb] = useState(null);
+            const [user, setUser] = useState(null);
+            const [appId, setAppId] = useState(null);
+            const [isFirebaseReady, setIsFirebaseReady] = useState(false);
+            const [mode, setMode] = useState('select-mosque');
+            const [mosqueRegistry, setMosqueRegistry] = useState([]);
+            const [globalConfig, setGlobalConfig] = useState({ adminPassword: 'Amio225', customDomain: '' }); 
+            const [isRegistryLoaded, setIsRegistryLoaded] = useState(false);
+            const [showGlobalAdmin, setShowGlobalAdmin] = useState(false);
+            const [showLoginModal, setShowLoginModal] = useState(false);
+            const [loginTarget, setLoginTarget] = useState({ type: '', mosqueId: '', mosqueLabel: '' }); 
+            const [loginInputName, setLoginInputName] = useState('');
+            const [loginInputPass, setLoginInputPass] = useState('');
+            const [notification, setNotification] = useState(null); 
+            const [confirmModal, setConfirmModal] = useState(null); 
+            const [restoreFile, setRestoreFile] = useState(null);
+            const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+            const [transferSourceId, setTransferSourceId] = useState('');
+            const [transferTargetId, setTransferTargetId] = useState('');
+            const [transferPersonName, setTransferPersonName] = useState('');
+            const [transferTargetGroup, setTransferTargetGroup] = useState('1');
+            const [newMosqueName, setNewMosqueName] = useState('');
+            const [editMosqueId, setEditMosqueId] = useState(null);
+            const [editMosqueName, setEditMosqueName] = useState('');
+            const [changePassMosqueId, setChangePassMosqueId] = useState(null);
+            const [newMosquePass, setNewMosquePass] = useState('');
+            const [globalPassInput, setGlobalPassInput] = useState('');
+            const [globalDomainInput, setGlobalDomainInput] = useState(''); 
+            const [roomName, setRoomName] = useState(''); 
+            const [roomLabel, setRoomLabel] = useState('');
+            const [viewType, setViewType] = useState('admin'); 
+            const [currentUser, setCurrentUser] = useState(null); 
+            const [isReadOnly, setIsReadOnly] = useState(false); 
+            const [loading, setLoading] = useState(false);
+            const [errorMsg, setErrorMsg] = useState('');
+            const [finalData, setFinalData] = useState([]);
+            const [rawData, setRawData] = useState([]);
+            const [teachersList, setTeachersList] = useState([]); 
+            const [headers, setHeaders] = useState([]);
+            const [columnMap, setColumnMap] = useState({ name: '', family: '', scoreInd: '', scoreSoc: '', group: '' });
+            const [filterGroup, setFilterGroup] = useState('all'); 
+            const [searchQuery, setSearchQuery] = useState('');
+            const [lastUpdated, setLastUpdated] = useState(null);
+            const [editingId, setEditingId] = useState(null); 
+            const [editValues, setEditValues] = useState({}); 
+            const [showResetModal, setShowResetModal] = useState(false);
+            const [resetPassword, setResetPassword] = useState('');
+            const [showTeachersModal, setShowTeachersModal] = useState(false); 
+            const [showMosqueSettingsModal, setShowMosqueSettingsModal] = useState(false); 
+            const [showGroupManager, setShowGroupManager] = useState(false);
+            const [groupEditTarget, setGroupEditTarget] = useState(null);
+            const [groupEditNewName, setGroupEditNewName] = useState('');
+            const [globalEditId, setGlobalEditId] = useState(null); 
+            const [globalEditData, setGlobalEditData] = useState(null); 
+            const [globalEditType, setGlobalEditType] = useState(null); 
+            const [currentMosqueSettingsName, setCurrentMosqueSettingsName] = useState('');
+            const [currentMosqueSettingsPass, setCurrentMosqueSettingsPass] = useState('');
+            
+            const [sourceMembers, setSourceMembers] = useState([]);
+            const [showTransferSuggestions, setShowTransferSuggestions] = useState(false);
+            // New state for DNS info visibility
+            const [showDnsInfo, setShowDnsInfo] = useState(false);
+
+            const nameInputRef = useRef(null);
+
+            useEffect(() => { const initFirebase = async () => { if (!window.firebaseModules || !window.__firebase_config) return; try { const { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore } = window.firebaseModules; const firebaseConfig = JSON.parse(window.__firebase_config); const app = initializeApp(firebaseConfig); const auth = getAuth(app); const firestore = getFirestore(app); const currentAppId = typeof window.__app_id !== 'undefined' ? window.__app_id : 'default-app-id'; setDb(firestore); setAppId(currentAppId); if (typeof window.__initial_auth_token !== 'undefined' && window.__initial_auth_token) await signInWithCustomToken(auth, window.__initial_auth_token); else await signInAnonymously(auth); onAuthStateChanged(auth, (u) => { if (u) { setUser(u); setIsFirebaseReady(true); } }); } catch (e) { console.error("Firebase Auth Error:", e); setErrorMsg("خطا در اتصال به سرور: لطفاً اتصال اینترنت خود را بررسی کنید."); setIsFirebaseReady(false); } }; const checkModules = setInterval(() => { if (window.firebaseModules) { clearInterval(checkModules); initFirebase(); } }, 100); return () => clearInterval(checkModules); }, []);
+            useEffect(() => { if (!isFirebaseReady || !db || !appId) return; const { doc, onSnapshot, setDoc } = window.firebaseModules; try { const registryRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'mosque_registry'); const unsubReg = onSnapshot(registryRef, (snap) => { if (snap.exists()) { setMosqueRegistry(snap.data().list || []); } else { const defaults = [{ id: 'mosque_1', label: 'مسجد ۱', adminPass: '1234' }]; setDoc(registryRef, { list: defaults }); setMosqueRegistry(defaults); } setIsRegistryLoaded(true); setErrorMsg(''); }, (error) => { console.error("Registry Listener Error:", error); setErrorMsg("عدم دسترسی به سرور. لطفاً اتصال اینترنت را بررسی کنید."); setIsRegistryLoaded(true); }); const configRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global_config'); const unsubConf = onSnapshot(configRef, (snap) => { 
+                if(snap.exists()) {
+                    const data = snap.data();
+                    setGlobalConfig(data);
+                    setGlobalDomainInput(data.customDomain || '');
+                    // If domain exists, we can show DNS info if needed, but let's default to false to not clutter
+                } else {
+                    setDoc(configRef, { adminPassword: 'Amio225' });
+                }
+            }, (error) => console.error("Config Listener Error:", error)); return () => { unsubReg(); unsubConf(); }; } catch (e) { console.error("Setup Listeners Error:", e); setErrorMsg("خطای داخلی در راه‌اندازی."); setIsRegistryLoaded(true); } }, [isFirebaseReady, db, appId]);
+            useEffect(() => { if (editingId !== null && nameInputRef.current) nameInputRef.current.focus(); }, [editingId]);
+            useEffect(() => { if (!transferSourceId || !db || !appId) { setSourceMembers([]); return; } const { doc, getDoc } = window.firebaseModules; const fetchMembers = async () => { try { const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'scoreboards', transferSourceId); const snap = await getDoc(docRef); if (snap.exists()) { setSourceMembers(snap.data().data || []); } } catch (e) { console.error("Error fetching members", e); } }; fetchMembers(); }, [transferSourceId, db, appId]);
+
+            const showNotify = (type, msg) => { setNotification({ type, msg }); setTimeout(() => setNotification(null), 4000); };
+            const triggerConfirm = (message, action) => { setConfirmModal({ message, onConfirm: action }); };
+            const updateRegistry = async (newList) => { if(!db) return; const { doc, setDoc } = window.firebaseModules; try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'mosque_registry'), { list: newList }, { merge: true }); } catch (e) { showNotify('error', 'خطا در ذخیره سازی: ' + e.message); } };
+            const updateGlobalConfig = async (newConf) => { if(!db) return; const { doc, setDoc } = window.firebaseModules; try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global_config'), newConf, { merge: true }); } catch (e) { showNotify('error', 'خطا در ذخیره سازی'); } };
+            const addNewMosque = async () => { if (!newMosqueName.trim()) return showNotify('error', 'نام وارد نشده است'); const newId = `mosque_${Date.now()}`; const newList = [...mosqueRegistry, { id: newId, label: newMosqueName.trim(), adminPass: '1234' }]; setNewMosqueName(''); await updateRegistry(newList); };
+            const saveMosqueName = async (id) => { const newList = mosqueRegistry.map(m => m.id === id ? { ...m, label: editMosqueName.trim() } : m); setEditMosqueId(null); await updateRegistry(newList); };
+            const saveMosquePass = async (id) => { if(!newMosquePass) return showNotify('error', 'رمز عبور نمی‌تواند خالی باشد'); const newList = mosqueRegistry.map(m => m.id === id ? { ...m, adminPass: newMosquePass } : m); setChangePassMosqueId(null); setNewMosquePass(''); await updateRegistry(newList); showNotify('success', 'رمز تغییر کرد'); };
+            const openMosqueSettings = () => { const current = mosqueRegistry.find(m => m.id === roomName); if (current) { setCurrentMosqueSettingsName(current.label); setCurrentMosqueSettingsPass(current.adminPass || '1234'); setShowMosqueSettingsModal(true); } };
+            const saveCurrentMosqueSettings = async () => { if (!currentMosqueSettingsName.trim() || !currentMosqueSettingsPass) return showNotify('error', 'اطلاعات ناقص است.'); const newList = mosqueRegistry.map(m => m.id === roomName ? { ...m, label: currentMosqueSettingsName.trim(), adminPass: currentMosqueSettingsPass } : m); await updateRegistry(newList); setRoomLabel(currentMosqueSettingsName.trim()); setShowMosqueSettingsModal(false); showNotify('success', 'ذخیره شد'); };
+            const changeGlobalPass = async () => { if(!globalPassInput) return; await updateGlobalConfig({ adminPassword: globalPassInput }); setGlobalPassInput(''); showNotify('success', 'رمز کل تغییر کرد'); };
+            const saveGlobalDomain = async () => { await updateGlobalConfig({ customDomain: globalDomainInput }); setShowDnsInfo(true); showNotify('success', 'دامنه ذخیره شد'); };
+            const deleteMosque = (id) => { triggerConfirm('حذف شود؟', async () => { await updateRegistry(mosqueRegistry.filter(m => m.id !== id)); setConfirmModal(null); }); };
+            const openGlobalManager = async (mosqueId, type) => { setLoading(true); const { doc, getDoc } = window.firebaseModules; try { const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'scoreboards', mosqueId); const snap = await getDoc(docRef); if (snap.exists()) { setGlobalEditId(mosqueId); setGlobalEditData(snap.data()); setGlobalEditType(type); if (type === 'group') setShowGroupManager(true); else if (type === 'teacher') setShowTeachersModal(true); } else { showNotify('error', 'اطلاعات یافت نشد'); } } catch(e) { showNotify('error', 'خطا'); } finally { setLoading(false); } };
+            const performGlobalTransfer = async () => { if (!transferSourceId || !transferTargetId || !transferPersonName) return showNotify('error', 'نقص اطلاعات'); if (transferSourceId === transferTargetId) return showNotify('error', 'مبدأ و مقصد یکسان است'); setLoading(true); const { doc, getDoc, writeBatch } = window.firebaseModules; try { const sRef = doc(db, 'artifacts', appId, 'public', 'data', 'scoreboards', transferSourceId); const tRef = doc(db, 'artifacts', appId, 'public', 'data', 'scoreboards', transferTargetId); const [sSnap, tSnap] = await Promise.all([getDoc(sRef), getDoc(tRef)]); if (!sSnap.exists() || !tSnap.exists()) throw new Error('مسجد یافت نشد'); const sData = sSnap.data().data || []; const tData = tSnap.data().data || []; const pIdx = sData.findIndex(p => p.name === transferPersonName); if (pIdx === -1) throw new Error('فرد یافت نشد'); const person = sData[pIdx]; sData.splice(pIdx, 1); tData.push({ ...person, group: transferTargetGroup || '1' }); const batch = writeBatch(db); batch.update(sRef, { data: sData, updatedAt: Date.now() }); batch.update(tRef, { data: tData, updatedAt: Date.now() }); await batch.commit(); showNotify('success', 'انتقال انجام شد'); setTransferPersonName(''); } catch (e) { showNotify('error', e.message); } finally { setLoading(false); } };
+            const handleSelectMosque = async (id, label, type) => { if (!isFirebaseReady) return; setLoading(true); setRoomName(id); setRoomLabel(label); setShowGlobalAdmin(false); setViewType(type); setIsReadOnly(type === 'group' || type === 'individual'); setErrorMsg(''); const { doc, getDoc, onSnapshot } = window.firebaseModules; try { const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'scoreboards', id); const docSnap = await getDoc(docRef); if (docSnap.exists()) { setMode('dashboard'); } else { if (type === 'group' || type === 'individual') { showNotify('error', 'اطلاعاتی نیست'); setLoading(false); return; } setMode('setup-upload'); } } catch (err) { showNotify('error', 'خطا'); } finally { if (mode === 'select-mosque') setLoading(false); } };
+            const initiateLogin = (type, mosqueId = '', mosqueLabel = '') => { setLoginTarget({ type, mosqueId, mosqueLabel }); setLoginInputName(''); setLoginInputPass(''); setShowLoginModal(true); };
+            const handleLoginKeyDown = (e) => { if (e.key === 'Enter') handleLoginSubmit(); };
+            const handleLoginSubmit = async () => { const { type, mosqueId, mosqueLabel } = loginTarget; if (type === 'global') { if (loginInputPass === globalConfig.adminPassword) { setShowLoginModal(false); setShowGlobalAdmin(true); } else { showNotify('error', 'رمز اشتباه'); } } else if (type === 'mosque_admin') { const m = mosqueRegistry.find(mo => mo.id === mosqueId); const correct = m?.adminPass || '1234'; if (loginInputPass === correct || loginInputPass === globalConfig.adminPassword) enterMosque(mosqueId, mosqueLabel, 'admin', { type: 'admin' }); else showNotify('error', 'رمز اشتباه'); } else if (type === 'teacher') { if(!db) return; setLoading(true); const { doc, getDoc } = window.firebaseModules; try { const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'scoreboards', mosqueId)); if (snap.exists()) { const t = (snap.data().teachers || []).find(teach => teach.name === loginInputName && teach.password === loginInputPass); if (t) enterMosque(mosqueId, mosqueLabel, 'teacher', { type: 'teacher', ...t }); else showNotify('error', 'اطلاعات اشتباه'); } else showNotify('error', 'اطلاعات یافت نشد'); } catch(e) { showNotify('error', 'خطا'); } finally { setLoading(false); } } };
+            const enterMosque = (id, label, type, userObj = null) => { setShowLoginModal(false); setRoomName(id); setRoomLabel(label); setViewType(type); setCurrentUser(userObj); setIsReadOnly(type === 'group' || type === 'individual'); setMode('dashboard'); };
+            useEffect(() => { if (mode !== 'dashboard' || !roomName || !db) return; const { doc, onSnapshot } = window.firebaseModules; try { const unsub = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'scoreboards', roomName), (snap) => { if (snap.exists()) { const d = snap.data(); setFinalData(d.data || []); setTeachersList(d.teachers || []); setLastUpdated(new Date(d.updatedAt)); } else { setFinalData([]); setTeachersList([]); } }, (err) => showNotify('error', 'خطا در دریافت')); return () => unsub(); } catch (e) {} }, [mode, roomName, db]);
+            const saveToCloud = async (newData = null, newTeachers = null) => { if (!db) return; let docId, label, currentTeachers, currentData; if (globalEditId) { docId = globalEditId; label = mosqueRegistry.find(m => m.id === globalEditId)?.label || 'مسجد'; currentTeachers = globalEditData.teachers; currentData = globalEditData.data; } else { if (isReadOnly) return; docId = roomName; label = roomLabel; currentTeachers = teachersList; currentData = finalData; } const { doc, setDoc } = window.firebaseModules; const payload = { data: newData !== null ? newData : (currentData || []), teachers: newTeachers !== null ? newTeachers : (currentTeachers || []), updatedAt: Date.now(), hostId: user.uid, label }; try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'scoreboards', docId), payload, { merge: true }); if (globalEditId) setGlobalEditData(payload); } catch (e) { showNotify('error', 'خطا'); } };
+            const addTeacher = async () => { if(!newTeacherName || !newTeacherPass || !newTeacherGroup) return showNotify('error', "ناقص"); const newT = { id: Date.now(), name: newTeacherName, password: newTeacherPass, group: newTeacherGroup }; const newList = [...teachersList, newT]; setNewTeacherName(''); setNewTeacherPass(''); setNewTeacherGroup(''); await saveToCloud(finalData, newList); };
+            const removeTeacher = (tId) => { triggerConfirm("حذف شود؟", async () => { await saveToCloud(finalData, teachersList.filter(t => t.id !== tId)); setConfirmModal(null); }); };
+            const deletePerson = (pId) => { triggerConfirm("حذف شود؟", async () => { const newData = finalData.filter(p => p.id !== pId); setFinalData(newData); await saveToCloud(newData, null); setConfirmModal(null); showNotify('success', 'حذف شد'); }); };
+            const saveEditing = async () => { if (isReadOnly) return; const newData = finalData.map(p => { if (p.id === editingId) { const ind = parseFloat(editValues.scoreInd) || 0; const soc = parseFloat(editValues.scoreSoc) || 0; const grp = editValues.group ? String(editValues.group).trim() : '1'; return { ...p, name: editValues.name, scoreInd: ind, scoreSoc: soc, total: ind + soc, group: grp }; } return p; }); setFinalData(newData); setEditingId(null); await saveToCloud(newData, null); };
+            const handleRenameGroup = async () => { if (!groupEditNewName || !groupEditNewName.trim()) return showNotify('error', 'ناقص'); const oldName = groupEditTarget; const newName = groupEditNewName.trim(); if (oldName === newName) { setGroupEditTarget(null); return; } const currentData = globalEditId ? (globalEditData.data || []) : finalData; const currentTeachers = globalEditId ? (globalEditData.teachers || []) : teachersList; const updatedData = currentData.map(p => p.group === oldName ? { ...p, group: newName } : p); const updatedTeachers = currentTeachers.map(t => t.group === oldName ? { ...t, group: newName } : t); if (!globalEditId) { setFinalData(updatedData); setTeachersList(updatedTeachers); } else { setGlobalEditData({ ...globalEditData, data: updatedData, teachers: updatedTeachers }); } await saveToCloud(updatedData, updatedTeachers); setGroupEditTarget(null); setGroupEditNewName(''); showNotify('success', 'تغییر کرد'); };
+            const handleFileUpload = (e) => { const file = e.target.files[0]; if (!file) return; const processFile = () => { const reader = new FileReader(); reader.onload = (evt) => { const wb = XLSX.read(evt.target.result, { type: 'binary' }); const ws = wb.Sheets[wb.SheetNames[0]]; const data = XLSX.utils.sheet_to_json(ws, { header: 1 }); if (data.length > 0) { setHeaders(data[0]); setRawData(data.slice(1).filter(r => r.length > 0)); setMode('setup-mapping'); } }; reader.readAsBinaryString(file); }; if (finalData.length > 0) { triggerConfirm("جایگزین شود؟", () => { setConfirmModal(null); processFile(); }); } else { processFile(); } e.target.value = null; };
+            const confirmMapping = async () => { const getIndex = (key) => headers.indexOf(columnMap[key]); const nameIdx = getIndex('name'); const familyIdx = getIndex('family'); const indIdx = getIndex('scoreInd'); const socIdx = getIndex('scoreSoc'); const groupIdx = getIndex('group'); const processed = rawData.map((row, idx) => { let name = row[nameIdx] || ''; if (familyIdx !== -1 && row[familyIdx]) name += ' ' + row[familyIdx]; let scoreInd = parseFloat(row[indIdx]); if (isNaN(scoreInd)) scoreInd = 0; let scoreSoc = 0; if (socIdx !== -1) { scoreSoc = parseFloat(row[socIdx]); if (isNaN(scoreSoc)) scoreSoc = 0; } let total = scoreInd + scoreSoc; let group = groupIdx !== -1 ? (row[groupIdx] || 'عمومی') : 'عمومی'; return { id: idx, name, scoreInd, scoreSoc, total, group: String(group).trim() }; }); processed.sort((a, b) => b.total - a.total); setFinalData(processed); await saveToCloud(processed, null); setMode('dashboard'); };
+            const handleBackup = async () => { if (!db) return; const { doc, getDoc } = window.firebaseModules; setLoading(true); try { const allData = {}; for (const mosque of mosqueRegistry) { const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'scoreboards', mosque.id)); if (snap.exists()) allData[mosque.id] = snap.data(); } const payload = { version: 2, timestamp: Date.now(), registry: mosqueRegistry, scoreboards: allData, globalConfig }; const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(payload)); const dlNode = document.createElement('a'); dlNode.setAttribute("href", dataStr); dlNode.setAttribute("download", `Backup_${new Date().toISOString().slice(0,10)}.json`); document.body.appendChild(dlNode); dlNode.click(); dlNode.remove(); } catch (e) { showNotify('error', 'خطا'); } finally { setLoading(false); } };
+            const handleRestoreFileSelect = (e) => { const file = e.target.files[0]; if (!file) return; setRestoreFile(file); setShowRestoreConfirm(true); e.target.value = null; };
+            const confirmRestore = async () => { if (!restoreFile || !db) return; const { doc, setDoc, writeBatch } = window.firebaseModules; setLoading(true); setShowRestoreConfirm(false); const reader = new FileReader(); reader.onload = async (ev) => { try { const backup = JSON.parse(ev.target.result); if(!backup.registry) throw new Error("نامعتبر"); const batch = writeBatch(db); batch.set(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'mosque_registry'), { list: backup.registry }); if(backup.globalConfig) batch.set(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global_config'), backup.globalConfig); let op = 2; for (const id in backup.scoreboards) { if(op>=490){await batch.commit();op=0;} batch.set(doc(db, 'artifacts', appId, 'public', 'data', 'scoreboards', id), backup.scoreboards[id]); op++; } await batch.commit(); showNotify('success', 'بازیابی شد'); setShowGlobalAdmin(false); setRestoreFile(null); } catch (err) { showNotify('error', 'خطا'); } finally { setLoading(false); } }; reader.readAsText(restoreFile); };
+            const performReset = () => { if (resetPassword === 'Amio225') { setLoading(true); setFinalData([]); saveToCloud([], []).then(() => { setLoading(false); setShowResetModal(false); setResetPassword(''); showNotify('success', 'تمامی اطلاعات حذف شد.'); setMode('setup-upload'); }); } else { showNotify('error', 'رمز عبور اشتباه است.'); } };
+
+            const uniqueGroups = useMemo(() => { const s = new Set(finalData.map(d => String(d.group).trim())); return Array.from(s).sort((a,b) => (parseFloat(a)-parseFloat(b)) || a.localeCompare(b)); }, [finalData]);
+            const tableDisplayData = useMemo(() => { let d = [...finalData]; if (filterGroup !== 'all') { d = d.filter(x => String(x.group).toLowerCase() === filterGroup.toLowerCase()); } if (searchQuery) d = d.filter(x => x.name.toLowerCase().includes(searchQuery.toLowerCase())); if (viewType === 'individual') { d.sort((a, b) => b.total - a.total); } else { d.sort((a, b) => { const nA = parseFloat(a.group), nB = parseFloat(b.group); if (!isNaN(nA) && !isNaN(nB) && nA !== nB) return nA - nB; return b.total - a.total; }); } return d; }, [finalData, filterGroup, searchQuery, viewType]);
+            const gridGroups = useMemo(() => { const gs = {}; finalData.forEach(p => { const g = String(p.group).trim(); if(!gs[g]) gs[g] = 0; gs[g] += (p.total || 0); }); return Object.keys(gs).sort((a, b) => gs[b] - gs[a]).map(g => ({ name: g, total: gs[g] })); }, [finalData]);
+
+
+            // --- Render Functions ---
+
+            const renderMosqueSettingsModal = () => (
+                <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+                    <div className="bg-white p-6 rounded-2xl shadow-2xl max-w-sm w-full text-center">
+                        <div className="flex justify-between items-center mb-4"><h3 className="text-lg font-bold text-gray-800">تنظیمات مسجد</h3><button onClick={() => setShowMosqueSettingsModal(false)}><i className="ph ph-x text-xl"></i></button></div>
+                        <div className="space-y-4 mb-6">
+                            <div><label className="block text-right text-sm font-bold text-gray-700 mb-1">نام مسجد</label><input type="text" className="w-full p-2 border rounded-lg" value={currentMosqueSettingsName} onChange={(e) => setCurrentMosqueSettingsName(e.target.value)} /></div>
+                            <div><label className="block text-right text-sm font-bold text-gray-700 mb-1">رمز عبور مدیر</label><input type="text" className="w-full p-2 border rounded-lg font-mono text-left" value={currentMosqueSettingsPass} onChange={(e) => setCurrentMosqueSettingsPass(e.target.value)} /></div>
+                        </div>
+                        <button onClick={saveCurrentMosqueSettings} className="w-full py-2 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700">ذخیره تغییرات</button>
+                        
+                        {/* New: Clear All Data Button moved here */}
+                        <div className="pt-4 border-t border-gray-100 mt-4">
+                            <button 
+                                onClick={() => { setShowMosqueSettingsModal(false); setShowResetModal(true); }} 
+                                className="w-full py-3 bg-red-50 text-red-600 rounded-lg font-bold hover:bg-red-100 transition flex items-center justify-center gap-2"
+                            >
+                                <i className="ph ph-trash"></i>
+                                پاک کردن کل اطلاعات مسجد
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+
+            const renderGroupManagerModal = () => {
+                const currentData = globalEditId ? (globalEditData?.data || []) : finalData;
+                const groupsSet = new Set(currentData.map(d => String(d.group).trim()));
+                const currentGroups = Array.from(groupsSet).sort((a,b) => (parseFloat(a)-parseFloat(b)) || a.localeCompare(b));
+                return (
+                    <div className="fixed inset-0 bg-black/60 z-[250] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+                        <div className="bg-white p-6 rounded-2xl shadow-2xl max-w-md w-full max-h-[80vh] flex flex-col">
+                            <div className="flex justify-between items-center mb-4 pb-2 border-b"><h3 className="text-lg font-bold text-gray-800">مدیریت گروه‌ها</h3><button onClick={() => { setShowGroupManager(false); setGlobalEditId(null); setGlobalEditData(null); }}><i className="ph ph-x text-xl"></i></button></div>
+                            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-2">
+                                {currentGroups.map(g => (
+                                    <div key={g} className="flex items-center justify-between bg-gray-50 p-3 rounded-xl border border-gray-200">
+                                        {groupEditTarget === g ? (
+                                            <div className="flex items-center gap-2 flex-1"><input type="text" className="w-full p-1 bg-white border border-blue-400 rounded outline-none" value={groupEditNewName} onChange={(e) => setGroupEditNewName(e.target.value)} autoFocus /><button onClick={handleRenameGroup} className="text-green-600 p-1 hover:bg-green-100 rounded"><i className="ph-bold ph-check"></i></button><button onClick={() => setGroupEditTarget(null)} className="text-gray-500 p-1 hover:bg-gray-200 rounded"><i className="ph-bold ph-x"></i></button></div>
+                                        ) : ( <><span className="font-bold text-gray-700">{g}</span><button onClick={() => { setGroupEditTarget(g); setGroupEditNewName(g); }} className="text-blue-500 p-2 hover:bg-blue-100 rounded transition"><i className="ph-bold ph-pencil-simple"></i></button></> )}
+                                    </div>
+                                ))}
+                                {currentGroups.length === 0 && <p className="text-center text-gray-400 py-4">هیچ گروهی یافت نشد.</p>}
+                            </div>
+                            <div className="mt-4 pt-2 border-t text-xs text-gray-400 text-center">با تغییر نام گروه، تمام اعضای آن به گروه جدید منتقل می‌شوند.</div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const renderGlobalAdminModal = () => (
+                <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+                    <div className="bg-white p-6 rounded-2xl shadow-2xl max-w-2xl w-full h-[85vh] flex flex-col">
+                        <div className="flex justify-between items-center mb-4 pb-4 border-b"><h2 className="text-xl font-black text-gray-800 flex items-center gap-2"><i className="ph-fill ph-gear text-blue-600"></i> مدیریت کل مساجد</h2><button onClick={() => setShowGlobalAdmin(false)} className="text-gray-400 hover:text-red-500"><i className="ph ph-x text-2xl"></i></button></div>
+                        <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-6">
+                            <div className="bg-orange-50 p-4 rounded-xl border border-orange-200">
+                                <h3 className="text-sm font-bold text-orange-700 mb-3 flex items-center gap-2"><i className="ph-fill ph-arrows-left-right"></i> انتقال اعضا بین مساجد</h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
+                                    <select className="p-2 border rounded" value={transferSourceId} onChange={(e) => setTransferSourceId(e.target.value)}><option value="">مسجد مبدأ...</option>{mosqueRegistry.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}</select>
+                                    <select className="p-2 border rounded" value={transferTargetId} onChange={(e) => setTransferTargetId(e.target.value)}><option value="">مسجد مقصد...</option>{mosqueRegistry.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}</select>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
+                                    {/* --- Search & AutoComplete --- */}
+                                    <div className="relative">
+                                        <input 
+                                            type="text" 
+                                            className="w-full p-2 border rounded" 
+                                            placeholder="نام دقیق فرد..." 
+                                            value={transferPersonName} 
+                                            onChange={(e) => {
+                                                setTransferPersonName(e.target.value);
+                                                setShowTransferSuggestions(true);
+                                            }}
+                                            onFocus={() => setShowTransferSuggestions(true)}
+                                            onBlur={() => setTimeout(() => setShowTransferSuggestions(false), 200)}
+                                        />
+                                        {showTransferSuggestions && transferPersonName && (
+                                            <div className="absolute z-10 w-full bg-white border border-gray-300 mt-1 rounded-md shadow-lg max-h-40 overflow-y-auto">
+                                                {sourceMembers.filter(m => m.name.toLowerCase().includes(transferPersonName.toLowerCase())).map((m, idx) => (
+                                                    <div 
+                                                        key={idx} 
+                                                        className="p-2 hover:bg-blue-50 cursor-pointer text-sm border-b last:border-0 flex justify-between"
+                                                        onClick={() => {
+                                                            setTransferPersonName(m.name);
+                                                            setShowTransferSuggestions(false);
+                                                        }}
+                                                    >
+                                                        <span className="font-bold">{m.name}</span>
+                                                        <span className="text-gray-500 text-xs">({m.group})</span>
+                                                    </div>
+                                                ))}
+                                                {sourceMembers.filter(m => m.name.toLowerCase().includes(transferPersonName.toLowerCase())).length === 0 && <div className="p-2 text-gray-400 text-sm">موردی یافت نشد</div>}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <input type="text" className="p-2 border rounded" placeholder="گروه در مقصد (1)" value={transferTargetGroup} onChange={(e) => setTransferTargetGroup(e.target.value)} />
+                                </div>
+                                <button onClick={performGlobalTransfer} className="w-full bg-orange-600 text-white py-2 rounded font-bold hover:bg-orange-700">انتقال</button>
+                            </div>
+                            <div className="bg-gray-50 p-4 rounded-xl border border-gray-200"><h3 className="text-sm font-bold text-gray-700 mb-3">تنظیمات اصلی</h3><div className="flex gap-2 items-center"><input type="text" placeholder="تغییر رمز مدیریت کل (Amio225)..." className="flex-1 p-2 border rounded text-left font-mono" value={globalPassInput} onChange={(e) => setGlobalPassInput(e.target.value)} /><button onClick={changeGlobalPass} className="bg-gray-800 text-white px-4 py-2 rounded font-bold text-sm">ذخیره رمز</button></div></div>
+                            <div className="bg-blue-50 p-4 rounded-xl border border-blue-200">
+                                <h3 className="text-sm font-bold text-blue-700 mb-3">تنظیمات دامنه</h3>
+                                <div className="flex gap-2 items-center">
+                                    <input type="text" placeholder="دامنه اختصاصی..." className="flex-1 p-2 border rounded text-left font-mono" value={globalDomainInput} onChange={(e) => setGlobalDomainInput(e.target.value)} />
+                                    <button onClick={saveGlobalDomain} className="bg-blue-700 text-white px-4 py-2 rounded font-bold text-sm">ذخیره</button>
+                                </div>
+                                {showDnsInfo && (
+                                    <div className="mt-3 bg-white p-3 rounded border border-blue-100 text-xs text-gray-600 animate-fade-in">
+                                        <p className="font-bold mb-2">برای اتصال دامنه، رکوردهای زیر را در پنل دامنه خود (مانند ایرنیک) وارد کنید:</p>
+                                        <div className="grid grid-cols-3 gap-2 bg-gray-50 p-2 rounded mb-1">
+                                            <div className="font-bold">Type</div>
+                                            <div className="font-bold">Host</div>
+                                            <div className="font-bold">Value</div>
+                                            
+                                            <div>A</div>
+                                            <div>@</div>
+                                            <div className="font-mono">76.76.21.21</div>
+                                        </div>
+                                        <p className="text-gray-400 mt-1">توجه: اعمال تغییرات DNS ممکن است تا ۲۴ ساعت زمان ببرد.</p>
+                                    </div>
+                                )}
+                            </div>
+                            <div>
+                                <h3 className="text-sm font-bold text-gray-700 mb-3">مدیریت مساجد</h3>
+                                <div className="bg-blue-50 p-4 rounded-xl mb-4 flex gap-2 items-center"><input type="text" placeholder="نام مسجد جدید..." className="flex-1 p-3 border rounded-lg" value={newMosqueName} onChange={(e) => setNewMosqueName(e.target.value)} /><button onClick={addNewMosque} className="bg-blue-600 text-white px-4 py-3 rounded-lg font-bold"><i className="ph-bold ph-plus"></i></button></div>
+                                <div className="space-y-3">
+                                    {mosqueRegistry.map((m, idx) => (
+                                        <div key={m.id} className="flex flex-col md:flex-row items-center justify-between bg-white border p-3 rounded-xl hover:shadow-sm gap-3">
+                                            <div className="flex items-center gap-3 flex-1 w-full">
+                                                <span className="bg-gray-100 text-gray-500 text-xs px-2 py-1 rounded">{idx + 1}</span>
+                                                {editMosqueId === m.id ? <input type="text" className="flex-1 p-1 border-b-2 border-blue-500 outline-none" value={editMosqueName} onChange={(e) => setEditMosqueName(e.target.value)} autoFocus /> : <span className="font-bold text-gray-800">{m.label}</span>}
+                                            </div>
+                                            <div className="flex items-center gap-2 w-full md:w-auto justify-end">
+                                                <button onClick={() => openGlobalManager(m.id, 'group')} className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 font-bold text-xs flex items-center gap-1" title="مدیریت گروه‌ها"><i className="ph-bold ph-folder-open"></i> گروه‌ها</button>
+                                                <button onClick={() => openGlobalManager(m.id, 'teacher')} className="p-2 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 font-bold text-xs flex items-center gap-1" title="مدیریت اساتید"><i className="ph-bold ph-users-three"></i> اساتید</button>
+                                                {changePassMosqueId === m.id ? <div className="flex items-center gap-1 bg-yellow-50 p-1 rounded"><input type="text" placeholder="رمز جدید" className="w-20 p-1 text-sm border rounded" value={newMosquePass} onChange={(e) => setNewMosquePass(e.target.value)} /><button onClick={() => saveMosquePass(m.id)} className="text-green-600"><i className="ph-bold ph-check"></i></button><button onClick={() => setChangePassMosqueId(null)} className="text-gray-500"><i className="ph-bold ph-x"></i></button></div> : <button onClick={() => setChangePassMosqueId(m.id)} className="p-2 bg-yellow-100 text-yellow-700 rounded-lg flex gap-1 items-center font-mono text-xs" title="تغییر رمز"><i className="ph-bold ph-key"></i> {m.adminPass || '1234'}</button>}
+                                                {editMosqueId === m.id ? <><button onClick={() => saveMosqueName(m.id)} className="p-2 bg-green-100 text-green-600 rounded-lg"><i className="ph-bold ph-check"></i></button><button onClick={() => setEditMosqueId(null)} className="p-2 bg-gray-100 text-gray-500 rounded-lg"><i className="ph-bold ph-x"></i></button></> : <button onClick={() => { setEditMosqueId(m.id); setEditMosqueName(m.label); }} className="p-2 bg-gray-50 text-gray-500 rounded-lg"><i className="ph-bold ph-pencil-simple"></i></button>}
+                                                <button onClick={() => deleteMosque(m.id)} className="p-2 bg-red-50 text-red-500 rounded-lg"><i className="ph-bold ph-trash"></i></button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            <hr />
+                            <div className="flex gap-4"><button onClick={handleBackup} disabled={loading} className="flex-1 bg-white border py-3 rounded-lg hover:bg-gray-50 text-sm">دانلود بکاپ</button><label className="flex-1 bg-white border py-3 rounded-lg hover:bg-gray-50 cursor-pointer flex justify-center items-center gap-2 text-sm"><span>بازیابی اطلاعات (Restore)</span><input type="file" className="hidden" accept=".json" onChange={handleRestoreFileSelect} disabled={loading} /></label></div>
+                            <div className="pt-2"><button onClick={() => setShowGlobalAdmin(false)} className="w-full bg-gray-100 text-gray-700 py-3 rounded-xl font-bold hover:bg-gray-200 transition">تایید و بستن</button></div>
+                        </div>
+                    </div>
+                </div>
+            );
+
+            const renderMosqueSelector = () => (
+                <div className="flex flex-col items-center justify-center min-h-screen p-4 animate-fade-in bg-gradient-to-br from-indigo-50 to-blue-100 relative">
+                    <div className="fixed top-20 right-0 z-50">
+                        <div onClick={() => initiateLogin('global')} className="group flex items-center bg-white shadow-lg border border-gray-200 rounded-l-full transition-all duration-300 w-12 hover:w-48 overflow-hidden h-12 cursor-pointer">
+                            <div className="min-w-[3rem] h-full flex items-center justify-center bg-gray-50 group-hover:bg-blue-50 transition-colors"><i className="ph-fill ph-gear text-2xl text-gray-600 group-hover:text-blue-600 group-hover:rotate-90 transition-transform duration-500"></i></div>
+                            <div className="whitespace-nowrap pl-4 pr-2 font-bold text-gray-700 opacity-0 group-hover:opacity-100 transition-opacity duration-300 delay-75">مدیریت کل مساجد</div>
+                        </div>
+                    </div>
+                    <div className="w-full max-w-6xl text-center mt-12 md:mt-0">
+                         <h1 className="text-3xl font-extrabold text-blue-900 mb-8 drop-shadow-sm">سامانه رتبه‌بندی مساجد</h1>
+                         {!isRegistryLoaded || loading ? (
+                             <div className="bg-white p-8 rounded-2xl shadow-xl flex flex-col items-center max-w-md mx-auto"><i className="ph ph-spinner animate-spin text-4xl text-blue-600 mb-4"></i><p>در حال بارگذاری...</p></div>
+                         ) : (
+                             <div className="flex flex-wrap justify-center gap-6">
+                                {mosqueRegistry.map(m => (
+                                    <div key={m.id} className="w-full max-w-sm bg-white p-6 rounded-3xl shadow-lg border-t-8 border-blue-600 flex flex-col items-center hover:shadow-xl transition relative overflow-hidden group">
+                                        <div className="bg-blue-50 w-20 h-20 rounded-full flex items-center justify-center mb-4 text-blue-600 group-hover:scale-110 transition-transform duration-300"><i className="ph-fill ph-mosque text-4xl"></i></div>
+                                        <h2 className="text-2xl font-bold text-gray-800 mb-6 truncate max-w-full px-2">{m.label}</h2>
+                                        <div className="w-full grid grid-cols-2 gap-2">
+                                            <button onClick={() => initiateLogin('mosque_admin', m.id, m.label)} className="col-span-1 bg-gray-100 text-gray-700 py-3 rounded-xl font-bold hover:bg-gray-200 transition flex items-center justify-center gap-2 text-xs md:text-sm"><i className="ph-bold ph-gear"></i> مدیریت</button>
+                                            <button onClick={() => initiateLogin('teacher', m.id, m.label)} className="col-span-1 bg-purple-50 text-purple-700 py-3 rounded-xl font-bold hover:bg-purple-100 transition flex items-center justify-center gap-2 text-xs md:text-sm"><i className="ph-bold ph-chalkboard-teacher"></i> اساتید</button>
+                                            <button onClick={() => handleSelectMosque(m.id, m.label, 'group')} className="col-span-1 bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition flex items-center justify-center gap-2 shadow-md text-xs md:text-sm"><i className="ph-bold ph-squares-four"></i> گروهی</button>
+                                            <button onClick={() => handleSelectMosque(m.id, m.label, 'individual')} className="col-span-1 bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700 transition flex items-center justify-center gap-2 shadow-md text-xs md:text-sm"><i className="ph-bold ph-list-numbers"></i> فردی</button>
+                                        </div>
+                                    </div>
+                                ))}
+                             </div>
+                         )}
+                         {errorMsg && <p className="mt-8 text-red-500 bg-red-100 p-2 rounded-lg">{errorMsg}</p>}
+                    </div>
+                </div>
+            );
+
+            const renderSetupUpload = () => (
+                <div className="flex flex-col items-center justify-center min-h-screen p-4 animate-fade-in bg-gray-50">
+                    <div className="max-w-2xl w-full bg-white p-8 rounded-2xl shadow-lg text-center border-t-4 border-yellow-500">
+                        <div className="mb-4 text-yellow-500"><i className="ph-fill ph-info text-5xl"></i></div>
+                        <h2 className="text-2xl font-bold text-gray-800 mb-2">راه‌اندازی: <span className="text-blue-600">{roomLabel}</span></h2>
+                        <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-blue-300 rounded-lg cursor-pointer bg-blue-50 hover:bg-blue-100 transition mb-6 group">
+                            <i className="ph ph-file-xls text-3xl text-blue-400 mb-2 group-hover:scale-110 transition"></i><span className="text-blue-600 font-bold">آپلود فایل اکسل</span>
+                            <input type="file" className="hidden" accept=".xlsx,.csv" onChange={handleFileUpload} />
+                        </label>
+                        <button onClick={() => setMode('select-mosque')} className="text-gray-400 text-sm hover:text-red-500 flex items-center justify-center gap-1"><i className="ph ph-arrow-right"></i> بازگشت</button>
+                    </div>
+                </div>
+            );
+
+            const renderSetupMapping = () => (
+                <div className="flex flex-col items-center justify-center min-h-screen p-4 animate-fade-in">
+                     <div className="max-w-xl w-full bg-white p-8 rounded-2xl shadow-lg border-t-4 border-blue-500">
+                        <h2 className="text-xl font-bold mb-6 text-center text-gray-800">تطبیق ستون‌ها ({roomLabel})</h2>
+                        <div className="space-y-4 bg-gray-50 p-4 rounded-xl">
+                            {['name:نام', 'family:نام خانوادگی', 'scoreInd:امتیاز فردی', 'scoreSoc:امتیاز اجتماعی', 'group:نام گروه'].map(f => {
+                                const [k, l] = f.split(':');
+                                return <div key={k} className="flex flex-col"><label className="mb-1 text-sm font-bold text-gray-700">{l}</label><select className="p-2 border rounded-lg bg-white" value={columnMap[k]} onChange={(e) => setColumnMap({...columnMap, [k]: e.target.value})}><option value="">انتخاب...</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
+                            })}
+                        </div>
+                        <div className="flex gap-2 mt-6">
+                            <button onClick={() => setMode('setup-upload')} className="flex-1 py-3 text-gray-600 bg-gray-100 rounded-xl font-bold hover:bg-gray-200 transition">بازگشت</button>
+                            <button onClick={confirmMapping} className="flex-2 w-full py-3 bg-blue-600 text-white rounded-xl font-bold shadow-lg hover:bg-blue-700 transition">تایید و ساخت</button>
+                        </div>
+                    </div>
+                </div>
+            );
+
+            const renderDashboard = () => {
+                if (viewType === 'group') {
+                    return (
+                        <div className="min-h-screen bg-gray-100 p-2 md:p-4 overflow-hidden flex flex-col">
+                            <div className="flex justify-between items-center mb-4 px-2">
+                                <h1 className="text-2xl font-black text-gray-800 flex items-center gap-2"><i className="ph-fill ph-mosque text-blue-600"></i>{roomLabel}</h1>
+                                <button onClick={() => setMode('select-mosque')} className="bg-white p-2 rounded-full shadow text-gray-500 hover:text-gray-800"><i className="ph ph-sign-out text-lg"></i></button>
+                            </div>
+                            <div className="flex-1 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 overflow-y-auto">
+                                {gridGroups.map(groupInfo => {
+                                    const groupName = groupInfo.name;
+                                    const groupTotal = groupInfo.total;
+                                    const groupData = finalData.filter(p => String(p.group).trim() === groupName).sort((a, b) => b.total - a.total);
+                                    
+                                    return (
+                                        <div key={groupName} className="bg-white rounded-xl shadow-md flex flex-col overflow-hidden border border-gray-200 h-[300px] lg:h-auto">
+                                            <div className="bg-blue-50 p-2 border-b border-blue-100 flex justify-between items-center">
+                                                <div className="flex items-center gap-2 overflow-hidden">
+                                                    <span className="font-black text-blue-800 text-lg truncate" title={groupName}>{isNaN(parseFloat(groupName)) ? groupName : `گروه ${groupName}`}</span>
+                                                    <span className="bg-yellow-100 text-yellow-700 text-xs font-bold px-1.5 py-0.5 rounded border border-yellow-200 flex items-center gap-1" title="مجموع امتیاز گروه"><i className="ph-fill ph-star"></i> {groupTotal}</span>
+                                                </div>
+                                                <span className="bg-white text-blue-600 text-xs font-bold px-2 py-0.5 rounded-full border border-blue-100 shrink-0">{groupData.length} نفر</span>
+                                            </div>
+                                            <div className="flex-1 overflow-y-auto p-1 custom-scrollbar"><table className="w-full text-right text-sm"><thead className="text-gray-400 text-xs sticky top-0 bg-white"><tr><th className="pb-1 pr-1 font-normal">#</th><th className="pb-1 font-normal">نام</th><th className="pb-1 pl-2 text-left font-normal">کل</th></tr></thead><tbody className="divide-y divide-gray-50">{groupData.map((p, idx) => (<tr key={p.id} className="hover:bg-gray-50"><td className="py-1.5 pr-1 font-mono text-gray-400 text-xs w-6">{idx + 1}</td><td className="py-1.5 font-bold text-gray-700 truncate max-w-[100px]" title={p.name}>{p.name}</td><td className="py-1.5 pl-2 text-left font-black text-blue-600 dir-ltr text-sm">{p.total}</td></tr>))}</tbody></table></div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    );
+                }
+
+                const isSuperAdmin = viewType === 'admin';
+                const isTeacher = viewType === 'teacher';
+                const canEdit = isSuperAdmin || isTeacher;
+                const tabs = ['all', ...uniqueGroups];
+
+                let badgeClass = 'bg-red-100 text-red-600';
+                let badgeText = 'ویو فردی';
+                if (isSuperAdmin) { badgeClass = 'bg-gray-200 text-gray-600'; badgeText = 'پنل مدیریت'; }
+                if (isTeacher) { badgeClass = 'bg-purple-100 text-purple-600'; badgeText = `پنل اساتید (${currentUser?.name || ''})`; }
+
+                return (
+                    <div className={`max-w-7xl mx-auto p-4 md:p-8 animate-fade-in ${!canEdit ? 'bg-gray-50 min-h-screen' : 'pb-20'}`}>
+                        <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
+                            <div className="flex items-center gap-4 w-full md:w-auto">
+                                <button onClick={() => setMode('select-mosque')} className="bg-white p-3 rounded-full shadow hover:bg-gray-100 text-gray-600 transition"><i className="ph ph-arrow-right text-xl"></i></button>
+                                <div><h1 className={`${!isReadOnly ? 'text-2xl' : 'text-4xl'} font-extrabold text-gray-800 flex items-center gap-2`}>{roomLabel}<span className={`text-xs px-2 py-1 rounded font-normal ${badgeClass}`}>{badgeText}</span></h1></div>
+                            </div>
+                            <div className={`flex gap-2 w-full md:w-auto ${!canEdit ? 'opacity-80' : ''}`}>
+                                <div className="relative flex-1 md:w-64"><i className="ph ph-magnifying-glass absolute top-3 right-3 text-gray-400"></i><input type="text" placeholder="جستجو..." className="w-full p-2 pr-10 border-none bg-white shadow-sm rounded-lg focus:outline-none" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} /></div>
+                                {isSuperAdmin && (
+                                    <>
+                                        <button onClick={() => setShowGroupManager(true)} className="flex items-center justify-center bg-blue-50 text-blue-600 px-3 rounded-lg hover:bg-blue-100 shadow-sm" title="مدیریت گروه‌ها"><i className="ph ph-folder-open text-xl"></i></button>
+                                        <button onClick={openMosqueSettings} className="flex items-center justify-center bg-gray-100 text-gray-600 px-3 rounded-lg hover:bg-gray-200 shadow-sm" title="تنظیمات مسجد"><i className="ph ph-gear text-xl"></i></button>
+                                        <button onClick={() => setShowTeachersModal(true)} className="flex items-center justify-center bg-purple-50 text-purple-600 px-3 rounded-lg hover:bg-purple-100 shadow-sm" title="مدیریت اساتید"><i className="ph ph-users-three text-xl"></i></button>
+                                        <label className="flex items-center justify-center bg-white text-blue-600 px-3 rounded-lg cursor-pointer hover:bg-blue-50 shadow-sm"><i className="ph ph-upload-simple text-xl"></i><input type="file" className="hidden" accept=".xlsx" onChange={handleFileUpload} /></label>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+
+                        {showResetModal && viewType === 'admin' && (
+                            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"><div className="bg-white p-6 rounded-2xl shadow-2xl max-w-sm w-full text-center"><h3 className="text-lg font-bold mb-2">حذف اطلاعات؟</h3><input type="password" className="w-full p-2 border rounded mb-4" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} placeholder="رازیانی" /><div className="flex gap-2"><button onClick={() => setShowResetModal(false)} className="flex-1 bg-gray-100 rounded p-2">لغو</button><button onClick={performReset} className="flex-1 bg-red-600 text-white rounded p-2">حذف</button></div></div></div>
+                        )}
+                        {showTeachersModal && (
+                            <TeacherManagerModal 
+                                onClose={() => { setShowTeachersModal(false); setGlobalEditId(null); setGlobalEditData(null); }}
+                                isGlobal={!!globalEditId}
+                                globalLabel={mosqueRegistry.find(m=>m.id===globalEditId)?.label}
+                                dataList={globalEditId ? (globalEditData?.teachers || []) : teachersList}
+                                groupList={globalEditId ? Array.from(new Set((globalEditData?.data||[]).map(d => String(d.group).trim()))) : uniqueGroups}
+                                onSave={(newList) => saveToCloud(null, newList)}
+                            />
+                        )}
+                        
+                        {showMosqueSettingsModal && viewType === 'admin' && renderMosqueSettingsModal()}
+                        {showGroupManager && renderGroupManagerModal()}
+
+                        <div className="mb-6 overflow-x-auto group-tabs pb-2"><div className="flex gap-2 min-w-max">{tabs.map(g => (
+                            <button key={g} onClick={() => setFilterGroup(g)} className={`px-5 py-2 rounded-full font-bold transition shadow-sm border ${filterGroup === g ? 'bg-blue-600 text-white border-blue-600 scale-105' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+                                {g === 'all' ? 'همه گروه‌ها' : (isNaN(parseFloat(g)) ? g : `گروه ${g}`)}
+                            </button>
+                        ))}</div></div>
+
+                        <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-gray-100">
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-right border-collapse">
+                                    <thead className="bg-gray-100 text-gray-600 text-sm uppercase tracking-wider">
+                                        <tr><th className="p-4 w-20 text-center font-bold">رتبه</th><th className="p-4 font-bold">نام</th><th className="p-4 font-bold w-20">گروه</th><th className="p-4 text-center font-bold text-blue-700 w-28">فردی</th><th className="p-4 text-center font-bold text-green-700 w-28">اجتماعی</th><th className="p-4 text-left font-bold text-gray-800 w-32">کل</th>{!isReadOnly && <th className="p-4 w-24 text-center font-bold">عملیات</th>}</tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                        {tableDisplayData.map((p, index) => {
+                                            const rank = index + 1;
+                                            const isEditing = editingId === p.id;
+                                            const userCanEditRow = !isReadOnly && (viewType === 'admin' || (viewType === 'teacher' && currentUser.group === p.group));
+                                            let rankDisplay = <span className="text-gray-400 font-mono font-bold text-xl">{rank}</span>;
+                                            let rowClass = isReadOnly ? "viewer-individual-row p-6" : "hover:bg-blue-50/50 transition duration-150 group";
+                                            if(!isEditing) {
+                                                if(rank===1) { rankDisplay=<i className="ph-fill ph-trophy text-4xl medal-1"></i>; rowClass += " bg-yellow-50/70"; }
+                                                else if(rank===2) rankDisplay=<i className="ph-fill ph-medal text-4xl medal-2"></i>;
+                                                else if(rank===3) rankDisplay=<i className="ph-fill ph-medal text-4xl medal-3"></i>;
+                                            }
+                                            if(isEditing) rowClass = "bg-blue-50 border-l-4 border-blue-500";
+                                            return (
+                                                <tr key={p.id} className={rowClass}>
+                                                    <td className="p-5 text-center align-middle">{rankDisplay}</td>
+                                                    <td className="p-5 align-middle">{isEditing ? <input ref={nameInputRef} type="text" className="edit-input-name text-blue-800 bg-white p-2 rounded border text-lg font-bold" value={editValues.name} onChange={(e) => setEditValues({...editValues, name: e.target.value})} /> : <span className={`text-gray-800 ${isReadOnly ? 'text-2xl font-black' : 'text-lg font-bold'}`}>{p.name}</span>}</td>
+                                                    <td className="p-5 align-middle">{isEditing ? <input type="text" className="edit-input w-full p-2 bg-white rounded border" value={editValues.group} onChange={(e) => setEditValues({...editValues, group: e.target.value})} placeholder="نام گروه" /> : <span className="bg-gray-100 text-gray-600 rounded-lg px-2 py-1 text-xs border block text-center truncate max-w-[80px]" title={p.group}>{p.group}</span>}</td>
+                                                    <td className="p-5 align-middle text-center">{isEditing ? <input type="text" inputMode="decimal" className="edit-input text-blue-700 font-bold text-xl bg-white p-2 rounded border w-20 mx-auto" value={editValues.scoreInd} onChange={(e) => setEditValues({...editValues, scoreInd: e.target.value})} /> : <span className="text-blue-600 font-bold text-lg font-mono">{p.scoreInd}</span>}</td>
+                                                    <td className="p-5 align-middle text-center">{isEditing ? <input type="text" inputMode="decimal" className="edit-input text-green-700 font-bold text-xl bg-white p-2 rounded border w-20 mx-auto" value={editValues.scoreSoc} onChange={(e) => setEditValues({...editValues, scoreSoc: e.target.value})} /> : <span className="text-green-600 font-bold text-lg font-mono">{p.scoreSoc}</span>}</td>
+                                                    <td className="p-5 align-middle text-left"><span className={`font-mono tracking-tighter text-gray-800 ${isReadOnly ? 'text-3xl font-black' : 'text-xl font-black'}`}>{isEditing ? (parseFloat(editValues.scoreInd||0)+parseFloat(editValues.scoreSoc||0)) : p.total}</span></td>
+                                                    {!isReadOnly && <td className="p-5 text-center align-middle">{isEditing ? <div className="flex justify-center gap-1"><button onClick={saveEditing} className="p-2 bg-green-500 text-white rounded"><i className="ph-bold ph-check"></i></button></div> : (userCanEditRow ? <div className="flex justify-center gap-1"><button onClick={() => { setEditingId(p.id); setEditValues({...p}); }} className="p-2 text-gray-400 hover:text-blue-600 bg-white border border-gray-200 rounded transition"><i className="ph-bold ph-pencil-simple text-lg"></i></button><button onClick={() => deletePerson(p.id)} className="p-2 text-red-400 hover:text-red-600 bg-white border border-red-100 rounded transition"><i className="ph-bold ph-trash text-lg"></i></button></div> : <span className="text-gray-300 text-xs">قفل</span>)}</td>}
+                                                </tr>
+                                            );
+                                        })}
+                                        {tableDisplayData.length === 0 && <tr><td colSpan={!isReadOnly ? 7 : 6} className="p-16 text-center text-gray-400">موردی یافت نشد.</td></tr>}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const renderLoginModal = () => (
+                <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+                    <div className="bg-white p-6 rounded-2xl shadow-2xl max-w-sm w-full text-center">
+                        <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600"><i className="ph-fill ph-lock-key text-3xl"></i></div>
+                        <h3 className="text-lg font-bold text-gray-800 mb-2">{loginTarget.type === 'global' ? 'ورود مدیریت کل' : loginTarget.type === 'teacher' ? 'ورود اساتید' : `مدیریت ${loginTarget.mosqueLabel}`}</h3>
+                        <div className="space-y-3 mb-6">
+                            {loginTarget.type === 'teacher' && <input type="text" placeholder="نام کاربری (نام استاد)..." className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" value={loginInputName} onChange={(e) => setLoginInputName(e.target.value)} autoFocus />}
+                            <input type="password" placeholder="رمز عبور..." className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-center font-mono" value={loginInputPass} onChange={(e) => setLoginInputPass(e.target.value)} autoFocus={loginTarget.type !== 'teacher'} onKeyDown={handleLoginKeyDown} />
+                        </div>
+                        <div className="flex gap-2"><button onClick={() => setShowLoginModal(false)} className="flex-1 py-2 text-gray-500 bg-gray-100 rounded-lg hover:bg-gray-200">لغو</button><button onClick={handleLoginSubmit} className="flex-1 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 font-bold">ورود</button></div>
+                    </div>
+                </div>
+            );
+
+            return (
+                <div className="min-h-screen relative">
+                    {/* ... (Toasts/Modals) ... */}
+                    {notification && <div className={`fixed top-4 left-1/2 transform -translate-x-1/2 z-[300] px-6 py-3 rounded-full shadow-lg font-bold text-white transition-all animate-fade-in ${notification.type === 'error' ? 'bg-red-500' : 'bg-green-500'}`}>{notification.msg}</div>}
+                    {confirmModal && (
+                        <div className="fixed inset-0 bg-black/60 z-[300] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+                            <div className="bg-white p-6 rounded-2xl shadow-xl max-w-sm w-full text-center">
+                                <h3 className="text-lg font-bold text-gray-800 mb-4">{confirmModal.message}</h3>
+                                <div className="flex gap-2">
+                                    <button onClick={() => setConfirmModal(null)} className="flex-1 py-2 text-gray-500 bg-gray-100 rounded-lg">خیر</button>
+                                    <button onClick={confirmModal.onConfirm} className="flex-1 py-2 text-white bg-blue-600 rounded-lg">بله</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Restore Confirmation Modal */}
+                    {showRestoreConfirm && (
+                        <div className="fixed inset-0 bg-black/60 z-[300] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+                            <div className="bg-white p-6 rounded-2xl shadow-xl max-w-sm w-full text-center border-t-4 border-red-500">
+                                <div className="bg-red-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600"><i className="ph-fill ph-warning text-3xl"></i></div>
+                                <h3 className="text-xl font-black text-gray-800 mb-2">هشدار بسیار مهم</h3>
+                                <p className="text-gray-600 mb-6 text-sm">با انجام بازیابی، تمام اطلاعات فعلی جایگزین می‌شود.</p>
+                                <div className="flex gap-2"><button onClick={() => { setShowRestoreConfirm(false); setRestoreFile(null); }} className="flex-1 py-3 text-gray-700 bg-gray-100 rounded-xl font-bold">انصراف</button><button onClick={confirmRestore} className="flex-1 py-3 text-white bg-red-600 rounded-xl font-bold shadow-lg hover:bg-red-700">تایید و جایگزینی</button></div>
+                            </div>
+                        </div>
+                    )}
+
+                    {mode === 'select-mosque' && renderMosqueSelector()}
+                    {mode === 'setup-upload' && renderSetupUpload()}
+                    {mode === 'setup-mapping' && renderSetupMapping()}
+                    {mode === 'dashboard' && renderDashboard()}
+                    {showLoginModal && renderLoginModal()}
+                    {showGlobalAdmin && renderGlobalAdminModal()}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
